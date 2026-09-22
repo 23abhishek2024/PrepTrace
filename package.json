@@ -1,0 +1,23 @@
+{
+  "name": "preptrace",
+  "version": "1.0.0",
+  "description": "PrepTrace - AI-Powered Mock Interview Platform & ATS Resume Analyzer",
+  "private": true,
+  "scripts": {
+    "start": "node backend/server.js",
+    "backend": "cd backend && npm start",
+    "frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build:frontend": "cd frontend && npm run build"
+  },
+  "keywords": [
+    "fresherai",
+    "ai-mock-interview",
+    "ats-resume-scorer",
+    "langchain",
+    "groq",
+    "mern-stack"
+  ],
+  "author": "Abhishek",
+  "license": "MIT"
+}
