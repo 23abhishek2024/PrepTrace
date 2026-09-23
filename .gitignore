@@ -19,3 +19,8 @@ backend/uploads/*
 .DS_Store
 Thumbs.db
 *.log
+
+# Personal Placement & Study Notes (Keep Private)
+RESUME_POINTS.md
+INTERVIEW_STUDY_GUIDE.md
+
