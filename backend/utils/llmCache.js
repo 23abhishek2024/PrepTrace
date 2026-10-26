@@ -5,7 +5,7 @@ import { MODEL_NAME } from "../config/llm.js";
 // Bump a version when its prompt changes, so old cached results are not reused.
 export const PROMPT_VERSIONS = {
   "resume-analysis": "v3", // v3: required vs nice-to-have JD skills, any-of alternatives
-  roadmap: "v2",
+  roadmap: "v3", // v3: documentation links are search links, not LLM-generated URLs
 };
 
 export const cacheStats = { hits: 0, misses: 0, errors: 0 };

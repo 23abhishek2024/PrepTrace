@@ -1,57 +1,26 @@
-import invokeJSON from "../utils/llmJson.js";
-import { resourceDocsSchema } from "../schemas/llm.schemas.js";
 import searchVideo from "../config/youtube.js";
 
-const RESOURCE_SYSTEM_PROMPT = `
-You are an expert software engineer.
+// ---------------------------------------------------------------------------
+// Attaches learning links to every roadmap module:
+//   - youtube: best tutorial from the YouTube Data API (or a YouTube search link)
+//   - article: a search for the topic's official documentation
+//
+// The LLM is NOT asked for documentation URLs any more: models invent
+// plausible-looking links that can be broken. A search link is always valid,
+// and this removes one LLM call per roadmap.
+// ---------------------------------------------------------------------------
 
-For every module below, return the best official documentation or learning resource URL.
+const docsSearchLink = (topic) =>
+  `https://www.google.com/search?q=${encodeURIComponent(`${topic} official documentation`)}`;
 
-Rules:
-1. Prefer official documentation (e.g. react.dev, developer.mozilla.org, nodejs.org, mongodb.com).
-2. If official documentation does not exist, return a high-quality free learning guide.
-3. Return ONLY valid JSON array.
-4. Do not explain anything.
-5. Keep the exact same title.
-
-Return format:
-[
-  {
-    "title": "",
-    "article": "https://..."
-  }
-]
-`;
+const youtubeSearchLink = (topic) =>
+  `https://www.youtube.com/results?search_query=${encodeURIComponent(`${topic} tutorial`)}`;
 
 export const resourceAgent = async (roadmap) => {
   try {
     if (!roadmap || !roadmap.modules || roadmap.modules.length === 0) {
       return roadmap;
     }
-
-    const moduleTitles = roadmap.modules
-      .map((module) => module.title)
-      .join("\n");
-
-    // Validated output; invalid items are dropped by the schema.
-    // If the call fails completely, every module falls back to the defaults below.
-    let docs = [];
-    try {
-      docs = await invokeJSON({
-        task: "roadmap-resources",
-        system: RESOURCE_SYSTEM_PROMPT,
-        user: `Modules:\n${moduleTitles}`,
-        schema: resourceDocsSchema,
-      });
-    } catch (error) {
-      console.warn("[roadmap-resources] falling back to default links:", error.message);
-      docs = [];
-    }
-
-    const docsMap = new Map();
-    docs.forEach((item) => {
-      docsMap.set(item.title.toLowerCase().trim(), item.article);
-    });
 
     roadmap.modules = await Promise.all(
       roadmap.modules.map(async (module) => {
@@ -64,10 +33,8 @@ export const resourceAgent = async (roadmap) => {
 
         return {
           ...module,
-          youtube: video?.url || `https://www.youtube.com/results?search_query=${encodeURIComponent(module.title + " tutorial")}`,
-          article:
-            docsMap.get(module.title.toLowerCase().trim()) ||
-            `https://developer.mozilla.org/`,
+          youtube: video?.url || youtubeSearchLink(module.title),
+          article: docsSearchLink(module.title),
         };
       })
     );
