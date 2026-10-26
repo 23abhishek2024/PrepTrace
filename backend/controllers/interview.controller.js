@@ -2,11 +2,29 @@ import Interview from "../models/interview.model.js";
 import { interviewAgent } from "../agents/interview.agent.js";
 import { feedbackAgent } from "../agents/feedback.agent.js";
 import { summaryAgent } from "../agents/summary.agent.js";
+import Resume from "../models/resume.model.js";
+import { LLMOutputError } from "../utils/llmJson.js";
+
+// Clean message when the AI keeps returning invalid output.
+const sendError = (res, error) => {
+  if (error instanceof LLMOutputError) {
+    return res.status(502).json({
+      success: false,
+      message: "The AI returned an invalid response. Please try again.",
+    });
+  }
+  return res.status(500).json({
+    success: false,
+    message: error.message,
+  });
+};
 
 export const startInterview = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { type, role, useResume = false, resume = {} } = req.body;
+    // `resume` in the request body is ignored on purpose: the resume is loaded
+    // from the database so a client cannot inject a fake resume into the prompt.
+    const { type, role, useResume = false } = req.body;
 
     if (!type || !role) {
       return res.status(400).json({
@@ -15,11 +33,28 @@ export const startInterview = async (req, res) => {
       });
     }
 
-    // Call interviewAgent directly (No LangGraph, no state machine)
-    const questions = await interviewAgent({
+    if (!["technical", "hr"].includes(String(type).toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        message: "Interview type must be technical or hr",
+      });
+    }
+
+    let resume = null;
+    if (useResume) {
+      resume = await Resume.findOne({ userId }).lean();
+      if (!resume) {
+        return res.status(400).json({
+          success: false,
+          message: "Please upload your resume first",
+        });
+      }
+    }
+
+    // Questions are generated with references retrieved from the question bank (RAG)
+    const { questions } = await interviewAgent({
       role,
       type,
-      useResume,
       resume,
     });
 
@@ -32,7 +67,7 @@ export const startInterview = async (req, res) => {
 
     const interview = await Interview.create({
       userId,
-      type,
+      type: String(type).toLowerCase(),
       role,
       useResume,
       questions,
@@ -49,10 +84,7 @@ export const startInterview = async (req, res) => {
     });
   } catch (error) {
     console.error("Start Interview Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    return sendError(res, error);
   }
 };
 
@@ -101,7 +133,6 @@ export const submitAnswer = async (req, res) => {
 
     const completed = interview.currentQuestion + 1 >= interview.questions.length;
 
-    // Call feedbackAgent directly (No LangGraph)
     const feedback = await feedbackAgent({
       question: currentQuestion.question,
       answer,
@@ -112,7 +143,6 @@ export const submitAnswer = async (req, res) => {
     interview.currentQuestion++;
 
     if (completed) {
-      // Call summaryAgent directly
       const report = await summaryAgent({
         role: interview.role,
         type: interview.type,
@@ -147,10 +177,92 @@ export const submitAnswer = async (req, res) => {
     });
   } catch (error) {
     console.error("Submit Answer Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message,
+    return sendError(res, error);
+  }
+};
+
+// End an interview early.
+// 1. If the candidate typed an answer for the current question, it is evaluated first.
+// 2. Only the answered questions are kept, so the report, the overall score and the
+//    dashboard averages are not dragged down by questions that were never asked.
+// 3. If nothing was answered, the interview is discarded (there is nothing to report).
+export const endInterview = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { interviewId, answer = "" } = req.body;
+
+    if (!interviewId) {
+      return res.status(400).json({
+        success: false,
+        message: "Interview Id is required",
+      });
+    }
+
+    const interview = await Interview.findOne({ _id: interviewId, userId });
+
+    if (!interview) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview not found",
+      });
+    }
+
+    // Already finished (e.g. double click): just return it
+    if (interview.status === "completed") {
+      return res.status(200).json({ success: true, completed: true, interview });
+    }
+
+    const current = interview.questions[interview.currentQuestion];
+    const answerText = String(answer || "").trim();
+    if (current && answerText) {
+      current.userAnswer = answerText;
+      current.feedback = await feedbackAgent({
+        question: current.question,
+        answer: answerText,
+        difficulty: current.difficulty,
+      });
+      interview.currentQuestion++;
+    }
+
+    const answeredCount = interview.currentQuestion;
+
+    if (answeredCount === 0) {
+      await Interview.deleteOne({ _id: interview._id });
+      return res.status(200).json({
+        success: true,
+        completed: false,
+        discarded: true,
+        message: "Interview ended before any answer, so it was discarded.",
+      });
+    }
+
+    interview.questions = interview.questions.slice(0, answeredCount);
+
+    const report = await summaryAgent({
+      role: interview.role,
+      type: interview.type,
+      questions: interview.questions,
     });
+
+    interview.status = "completed";
+    interview.endedEarly = true;
+    interview.overallScore = report.overallScore || 0;
+    interview.summary = report.summary || "";
+    interview.strengths = report.strengths || [];
+    interview.weaknesses = report.weaknesses || [];
+    interview.recommendations = report.recommendations || [];
+
+    await interview.save();
+
+    return res.status(200).json({
+      success: true,
+      completed: true,
+      endedEarly: true,
+      interview,
+    });
+  } catch (error) {
+    console.error("End Interview Error:", error);
+    return sendError(res, error);
   }
 };
 

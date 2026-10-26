@@ -1,55 +1,86 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import llm from "../config/llm.js";
+import invokeJSON from "../utils/llmJson.js";
+import resumePrompt from "../prompts/resumePrompt.js";
+import { resumeAnalysisSchema } from "../schemas/llm.schemas.js";
+import { computeATSScore, computeKeywordCoverage } from "../utils/atsScore.js";
+import { detectInjection, INJECTION_WARNING, LIMITS, wrapUntrusted } from "../utils/promptGuard.js";
 
-export const resumeAgent = async (resumeText) => {
-  const response = await llm.invoke([
-    new SystemMessage(`
-You are an Expert ATS Resume Analyzer.
+// A job description shorter than this is treated as "not provided".
+const MIN_JD_LENGTH = 50;
 
-Analyze the given resume thoroughly.
+export const resumeAgent = async ({ resumeText, jobDescription = "" }) => {
+  const hasJobDescription = String(jobDescription || "").trim().length >= MIN_JD_LENGTH;
+  const injectionFlag =
+    detectInjection(resumeText) || (hasJobDescription && detectInjection(jobDescription));
 
-Extract and evaluate the following information:
-- Full Name
-- Email
-- Phone Number
-- Professional Summary
-- Technical Skills
-- Projects
-- Education
-- Experience
-- Strengths
-- Weaknesses
-- Missing Skills
-- Suggested Job Role
-- ATS Score (0-100)
-- Recommendations
+  if (injectionFlag) {
+    console.warn("[resume-analysis] instruction-like text detected in resume/JD");
+  }
 
-IMPORTANT RULES:
-1. Return ONLY valid JSON.
-2. Do not use markdown backticks or formatting outside the JSON.
-3. Do not explain anything.
-4. Every field must exist in the output.
+  const user = [
+    "Analyze this resume.",
+    wrapUntrusted("resume", resumeText, LIMITS.resume),
+    hasJobDescription
+      ? `Job description to match against:\n${wrapUntrusted(
+          "job_description",
+          jobDescription,
+          LIMITS.jobDescription
+        )}`
+      : "No job description was provided.",
+    injectionFlag ? INJECTION_WARNING : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
-Response Format:
-{
-  "name": "",
-  "email": "",
-  "phone": "",
-  "summary": "",
-  "skills": [],
-  "projects": [],
-  "education": [],
-  "experience": [],
-  "strengths": [],
-  "weaknesses": [],
-  "missingSkills": [],
-  "suggestedRole": "",
-  "score": 0,
-  "recommendations": []
-}
-`),
-    new HumanMessage(resumeText),
-  ]);
+  const analysis = await invokeJSON({
+    task: "resume-analysis",
+    system: resumePrompt({ hasJobDescription }),
+    user,
+    schema: resumeAnalysisSchema,
+  });
 
-  return response.content;
+  // Keyword coverage against the JD is computed in code, not by the LLM:
+  // required skills (with "A | B" alternatives) and nice-to-have skills separately.
+  let jdMatch = null;
+  if (hasJobDescription) {
+    const required = computeKeywordCoverage(resumeText, analysis.jdRequiredSkills);
+    const preferred = computeKeywordCoverage(resumeText, analysis.jdPreferredSkills);
+    const hasPreferred = preferred.matched.length + preferred.missing.length > 0;
+    jdMatch = {
+      ...required,
+      preferredMatched: preferred.matched,
+      preferredMissing: preferred.missing,
+      preferredCoverage: hasPreferred ? preferred.coverage : null,
+    };
+  }
+
+  const { score, breakdown } = computeATSScore(analysis.rubric, jdMatch);
+
+  // With a JD: missing REQUIRED skills first, then missing nice-to-have, then the rest.
+  const missingSkills = jdMatch
+    ? [...new Set([...jdMatch.missing, ...jdMatch.preferredMissing, ...analysis.missingSkills])].slice(0, 15)
+    : analysis.missingSkills;
+
+  // eslint-disable-next-line no-unused-vars
+  const { rubric, jdRequiredSkills, jdPreferredSkills, ...details } = analysis;
+
+  return {
+    ...details,
+    missingSkills,
+    score,
+    scoreBreakdown: breakdown,
+    jdMatch: jdMatch
+      ? {
+          matched: jdMatch.matched,
+          missing: jdMatch.missing,
+          coverage: Math.round(jdMatch.coverage * 100),
+          preferredMatched: jdMatch.preferredMatched,
+          preferredMissing: jdMatch.preferredMissing,
+          preferredCoverage:
+            jdMatch.preferredCoverage == null ? null : Math.round(jdMatch.preferredCoverage * 100),
+        }
+      : null,
+    injectionFlag,
+  };
 };
+
+export default resumeAgent;

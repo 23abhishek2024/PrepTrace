@@ -34,6 +34,17 @@ export const submitAnswer = async (data) => {
     }
 }
 
+// End the interview early; `answer` is the text currently in the answer box (may be empty)
+export const endInterview = async (data) => {
+    try {
+        const response = await api.post(`/api/interview/end`, data)
+        return response.data
+    } catch (error) {
+        console.log(error)
+        return null
+    }
+}
+
 export const getAllInterviews = async () => {
      try {
         const response = await api.get(`/api/interview/all`)
@@ -43,4 +54,4 @@ export const getAllInterviews = async () => {
         console.log(error)
         return null
     }
-}
+}

@@ -15,6 +15,10 @@ build/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# Local embedding model cache (downloaded on first use) and eval outputs
+backend/.model-cache/
+backend/eval/results/
+
 # System Files
 .DS_Store
 Thumbs.db

@@ -18,6 +18,8 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
 
   # Frontend React 19 Client
   - type: static
@@ -26,5 +28,11 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
-      - key: VITE_API_URL
+      # The app reads VITE_BACKEND_URL (see frontend/src/utils/axios.js), e.g. https://preptrace-backend.onrender.com
+      - key: VITE_BACKEND_URL
         sync: false
+    routes:
+      # Single-page app: send every path to index.html so refreshing /dashboard works
+      - type: rewrite
+        source: /*
+        destination: /index.html

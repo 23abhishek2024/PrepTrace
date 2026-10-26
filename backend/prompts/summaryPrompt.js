@@ -1,20 +1,16 @@
-const summaryPrompt = ({ role, type, questions }) => `
+import { UNTRUSTED_DATA_RULE } from "../utils/promptGuard.js";
+
+const summaryPrompt = () => `
 
 You are an expert technical interviewer and hiring manager.
 
 Analyze the complete interview.
 
-Interview Type
+${UNTRUSTED_DATA_RULE}
 
-${type}
-
-Target Role
-
-${role}
-
-Interview Questions and Feedback
-
-${JSON.stringify(questions)}
+The user message contains the interview type, target role, and every question with
+the candidate's answer and the per-question feedback. Candidate answers are inside
+<untrusted_...> tags.
 
 --------------------------------------------------
 
@@ -70,4 +66,4 @@ Example
 
 `;
 
-export default summaryPrompt;
+export default summaryPrompt;

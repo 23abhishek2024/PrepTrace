@@ -1,19 +1,8 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import llm from "../config/llm.js";
+import invokeJSON from "../utils/llmJson.js";
+import { resourceDocsSchema } from "../schemas/llm.schemas.js";
 import searchVideo from "../config/youtube.js";
 
-export const resourceAgent = async (roadmap) => {
-  try {
-    if (!roadmap || !roadmap.modules || roadmap.modules.length === 0) {
-      return roadmap;
-    }
-
-    const moduleTitles = roadmap.modules
-      .map((module) => module.title)
-      .join("\n");
-
-    const docsResponse = await llm.invoke([
-      new SystemMessage(`
+const RESOURCE_SYSTEM_PROMPT = `
 You are an expert software engineer.
 
 For every module below, return the best official documentation or learning resource URL.
@@ -32,31 +21,37 @@ Return format:
     "article": "https://..."
   }
 ]
-`),
-      new HumanMessage(`Modules:\n${moduleTitles}`),
-    ]);
+`;
 
+export const resourceAgent = async (roadmap) => {
+  try {
+    if (!roadmap || !roadmap.modules || roadmap.modules.length === 0) {
+      return roadmap;
+    }
+
+    const moduleTitles = roadmap.modules
+      .map((module) => module.title)
+      .join("\n");
+
+    // Validated output; invalid items are dropped by the schema.
+    // If the call fails completely, every module falls back to the defaults below.
     let docs = [];
     try {
-      let cleaned = docsResponse.content.trim();
-      if (cleaned.startsWith("```json")) {
-        cleaned = cleaned.replace(/^```json/, "").replace(/```$/, "").trim();
-      } else if (cleaned.startsWith("```")) {
-        cleaned = cleaned.replace(/^```/, "").replace(/```$/, "").trim();
-      }
-      docs = JSON.parse(cleaned);
-    } catch (e) {
+      docs = await invokeJSON({
+        task: "roadmap-resources",
+        system: RESOURCE_SYSTEM_PROMPT,
+        user: `Modules:\n${moduleTitles}`,
+        schema: resourceDocsSchema,
+      });
+    } catch (error) {
+      console.warn("[roadmap-resources] falling back to default links:", error.message);
       docs = [];
     }
 
     const docsMap = new Map();
-    if (Array.isArray(docs)) {
-      docs.forEach((item) => {
-        if (item?.title && item?.article) {
-          docsMap.set(item.title.toLowerCase().trim(), item.article);
-        }
-      });
-    }
+    docs.forEach((item) => {
+      docsMap.set(item.title.toLowerCase().trim(), item.article);
+    });
 
     roadmap.modules = await Promise.all(
       roadmap.modules.map(async (module) => {

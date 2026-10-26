@@ -57,6 +57,12 @@ const feedbackSchema = new mongoose.Schema(
             type: [String],
             default: [],
         },
+
+        // True when the answer contained instruction-like text (possible prompt injection)
+        injectionFlag: {
+            type: Boolean,
+            default: false,
+        },
     },
     { _id: false }
 );
@@ -81,6 +87,12 @@ const questionSchema = new mongoose.Schema(
         timer: {
             type: Number,
             default: 60,
+        },
+
+        // Question-bank id this question was based on (RAG), or null
+        refId: {
+            type: String,
+            default: null,
         },
 
         feedback: {
@@ -154,6 +166,12 @@ const interviewSchema = new mongoose.Schema(
             enum: ["in-progress", "completed"],
             default: "in-progress",
         },
+
+        // True when the candidate ended the interview before the last question
+        endedEarly: {
+            type: Boolean,
+            default: false,
+        },
     },
     {
         timestamps: true,
@@ -162,4 +180,4 @@ const interviewSchema = new mongoose.Schema(
 
 const Interview = mongoose.model("Interview" , interviewSchema)
 
-export default Interview
+export default Interview

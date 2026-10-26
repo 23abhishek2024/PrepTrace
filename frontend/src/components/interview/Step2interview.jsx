@@ -2,11 +2,33 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import maleVideo from "../../assets/male-ai.mp4"
 import femaleVideo from "../../assets/female-ai.mp4"
 import { AnimatePresence, motion } from "motion/react"
-import { FiArrowRight, FiCamera, FiCameraOff, FiClock, FiCode, FiMessageSquare, FiMic, FiMicOff } from 'react-icons/fi'
+import { FiArrowRight, FiCamera, FiCameraOff, FiClock, FiCode, FiMessageSquare, FiMic, FiMicOff, FiSkipForward, FiXCircle } from 'react-icons/fi'
 import CodeEditor from './CodeEditor'
 import Timer from './Timer'
-import { submitAnswer } from '../../apis/interview.api'
+import { endInterview, submitAnswer } from '../../apis/interview.api'
 import { useNavigate } from 'react-router-dom'
+
+// Final phrases of one listening session, with repeats removed.
+// Chrome sometimes re-sends text it already recognized (the same phrase again,
+// or the previous phrase plus a few new words), which used to produce
+// "is more than is more than a ...".
+const collectPhrases = (results) => {
+  const phrases = [];
+  for (let i = 0; i < results.length; i++) {
+    if (!results[i].isFinal) continue;
+    const text = results[i][0].transcript.trim();
+    if (!text) continue;
+
+    const last = phrases[phrases.length - 1];
+    const lower = text.toLowerCase();
+    const lastLower = last ? last.toLowerCase() : "";
+
+    if (last && lower.startsWith(lastLower)) phrases[phrases.length - 1] = text; // same phrase, now longer
+    else if (last && lastLower.endsWith(lower)) continue; // repeat of the previous phrase
+    else phrases.push(text);
+  }
+  return phrases;
+};
 
 function Step2interview({ interviewData, user }) {
   const navigate = useNavigate()
@@ -47,26 +69,90 @@ function Step2interview({ interviewData, user }) {
   const progress = ((currentIndex + 1) / (interviewData.totalQuestions)) * 100;
   const showMicon = micOn && !isAIPlaying;
 
-  // Speech recognition
+  // ── Speech-to-text ──
+  // The spoken text is REBUILT from all final phrases on every result event
+  // (never appended), then added to the text that was in the box when
+  // listening started. Re-sent results therefore cannot duplicate words.
+  const mountedRef = useRef(true);
+  const listeningRef = useRef(false); // recognition is running right now
+  const wantMicRef = useRef(false); // it should be running (mic on, AI not speaking)
+  const baseTextRef = useRef(""); // answer text before the spoken part
+  const phrasesSeenRef = useRef(0); // phrases recognized in this session
+  const phrasesUsedRef = useRef(0); // phrases already included in baseTextRef
+
+  // Set the answer directly (typing, code editor, next question).
+  // Speech keeps adding after this text.
+  const replaceAnswer = useCallback((value) => {
+    baseTextRef.current = value;
+    phrasesUsedRef.current = phrasesSeenRef.current;
+    setAnswer(value);
+  }, []);
+
   useEffect(() => {
-    if (!("webkitSpeechRecognition" in window)) return;
-    const rec = new window.webkitSpeechRecognition();
+    mountedRef.current = true;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const rec = new SpeechRecognition();
     rec.lang = "en-US";
     rec.continuous = true;
     rec.interimResults = false;
-    rec.onresult = (e) => {
-      const t = e.results[e.results.length - 1][0].transcript;
-      setAnswer((prev) => prev + " " + t);
+
+    rec.onstart = () => {
+      listeningRef.current = true;
+      baseTextRef.current = answerRef.current.trim();
+      phrasesSeenRef.current = 0;
+      phrasesUsedRef.current = 0;
     };
+
+    rec.onresult = (e) => {
+      const phrases = collectPhrases(e.results);
+      phrasesSeenRef.current = phrases.length;
+      const spoken = phrases.slice(phrasesUsedRef.current).join(" ");
+      const base = baseTextRef.current;
+      setAnswer(spoken ? (base ? `${base} ${spoken}` : spoken) : base);
+    };
+
+    rec.onerror = (e) => {
+      // Microphone permission denied: stop trying to restart
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        wantMicRef.current = false;
+      }
+    };
+
+    // Chrome stops listening after a few seconds of silence: restart if still wanted
+    rec.onend = () => {
+      listeningRef.current = false;
+      if (!wantMicRef.current || !mountedRef.current) return;
+      setTimeout(() => {
+        if (wantMicRef.current && mountedRef.current && !listeningRef.current) {
+          try { rec.start(); } catch { /* already starting */ }
+        }
+      }, 250);
+    };
+
     recognitionRef.current = rec;
+
+    // Leaving the page: stop listening, speaking and the camera
+    return () => {
+      mountedRef.current = false;
+      wantMicRef.current = false;
+      try { rec.abort(); } catch { /* not running */ }
+      window.speechSynthesis?.cancel();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
   }, []);
 
   const startMic = useCallback(() => {
-    recognitionRef.current?.start();
+    if (!mountedRef.current) return;
+    wantMicRef.current = true;
+    if (listeningRef.current) return;
+    try { recognitionRef.current?.start(); } catch { /* already started */ }
   }, []);
 
   const stopMic = useCallback(() => {
-    recognitionRef.current?.stop();
+    wantMicRef.current = false;
+    try { recognitionRef.current?.stop(); } catch { /* not running */ }
   }, []);
 
   const toggleMic = () => {
@@ -99,10 +185,9 @@ function Step2interview({ interviewData, user }) {
   };
 
   const handleSubmitCode = (code) => {
-    setAnswer((prev) => {
-      const separator = prev.trim() ? "\n\n--- Code ---\n" : "--- Code ---\n";
-      return prev + separator + code;
-    });
+    const prev = answerRef.current;
+    const separator = prev.trim() ? "\n\n--- Code ---\n" : "--- Code ---\n";
+    replaceAnswer(prev + separator + code);
     setCodeOpen(false);
   };
 
@@ -180,79 +265,119 @@ function Step2interview({ interviewData, user }) {
     speakQuestion();
   }, [question, selectedVoice, speakText]);
 
-  useEffect(() => {
-    if (timeLeft !== 0) return;
-    const autoSubmit = async () => {
-      await speakText("Time is up. Submitting your answer now.");
-      const finalAnswer = answerRef.current.trim() || "No answer provided. Time over.";
+  // Stop the AI voice immediately (used by Skip and End interview)
+  const stopSpeaking = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    aiVideoRef.current?.pause();
+    setIsAIPlaying(false);
+    setSubtitle("");
+  }, []);
 
-      setLoading(true);
-
-      const res = await submitAnswer({ interviewId: interviewData.interviewId, answer: finalAnswer });
-
-      if (res?.completed) {
-        setFeedback(res.feedback);
-        await new Promise((r) => setTimeout(r, 700));
-        await speakText(
-          res.feedback?.feedback ||
-          "Great job! Your interview is complete. Preparing your report now."
-        );
-        setLoading(false);
-        navigate(`/interview/${interviewData.interviewId}/report`);
-        return;
-      }
-
-      setFeedback(res?.feedback);
-      await new Promise((r) => setTimeout(r, 700));
-      await speakText(
-        res?.feedback?.feedback ||
-        "Noted your answer. Let's move to the next question."
-      );
+  // After an answer is submitted or skipped: feedback, then next question or report
+  const handleResult = useCallback(async (res, { speakFeedback = true } = {}) => {
+    if (!res) {
       setLoading(false);
-      setQuestion(res.question);
-      setCurrentIndex(res.currentQuestion);
-      setAnswer("");
-      setFeedback(null);
-      setTimeLeft(res.question?.timer || 60);
+      setTimeLeft((t) => (t <= 0 ? 30 : t)); // avoid an instant auto-submit loop
       setTimerActive(true);
-    };
+      alert("Could not submit the answer. Check that the backend is running and try again.");
+      return;
+    }
 
-    autoSubmit();
-  }, [timeLeft, interviewData.interviewId, navigate, speakText]);
+    const doneMessage = "Great job! Your interview is complete. Preparing your report now.";
 
-  const submit = async () => {
-    if (!answer.trim()) return;
-
-    setTimerActive(false);
-    setLoading(true);
-
-    const res = await submitAnswer({ interviewId: interviewData.interviewId, answer });
-
-    if (res?.completed) {
-      setFeedback(res.feedback);
+    if (res.completed) {
+      if (speakFeedback) setFeedback(res.feedback);
       await new Promise((r) => setTimeout(r, 700));
-      await speakText(
-        res.feedback?.feedback ||
-        "Great job! Your interview is complete. Preparing your report now."
-      );
+      await speakText(speakFeedback ? res.feedback?.feedback || doneMessage : doneMessage);
       setLoading(false);
       navigate(`/interview/${interviewData.interviewId}/report`);
       return;
     }
 
-    setFeedback(res?.feedback);
-    await new Promise((r) => setTimeout(r, 700));
-    await speakText(
-      res?.feedback?.feedback ||
-      "Noted your answer. Let's move to the next question."
-    );
+    if (speakFeedback) {
+      setFeedback(res.feedback);
+      await new Promise((r) => setTimeout(r, 700));
+      await speakText(res.feedback?.feedback || "Noted your answer. Let's move to the next question.");
+    }
     setLoading(false);
     setQuestion(res.question);
     setCurrentIndex(res.currentQuestion);
-    setAnswer("");
+    replaceAnswer("");
     setFeedback(null);
     setTimeLeft(res.question?.timer || 60);
     setTimerActive(true);
+  }, [speakText, navigate, interviewData.interviewId, replaceAnswer]);
+
+  // Time over: submit whatever is in the box (an empty answer scores 0 without an AI call)
+  useEffect(() => {
+    if (timeLeft !== 0 || !timerActive) return;
+    const autoSubmit = async () => {
+      setTimerActive(false);
+      setLoading(true);
+      await speakText("Time is up. Submitting your answer now.");
+      const res = await submitAnswer({
+        interviewId: interviewData.interviewId,
+        answer: answerRef.current.trim(),
+      });
+      await handleResult(res);
+    };
+    autoSubmit();
+  }, [timeLeft, timerActive, interviewData.interviewId, speakText, handleResult]);
+
+  const submit = async () => {
+    if (loading || !answer.trim()) return;
+
+    setTimerActive(false);
+    setLoading(true);
+
+    const res = await submitAnswer({ interviewId: interviewData.interviewId, answer });
+    await handleResult(res);
+  };
+
+  // Skip: sends an empty answer (scored 0 on the server, no AI call) and moves on
+  const skip = async () => {
+    if (loading) return;
+    stopSpeaking();
+    setTimerActive(false);
+    setLoading(true);
+
+    const res = await submitAnswer({ interviewId: interviewData.interviewId, answer: "" });
+    await handleResult(res, { speakFeedback: false });
+  };
+
+  // End early: the typed answer (if any) is evaluated, and the report
+  // covers only the questions answered so far
+  const endEarly = async () => {
+    if (loading) return;
+    const ok = window.confirm(
+      "End the interview now? Your typed answer (if any) will be submitted, and the report will cover only the questions you answered."
+    );
+    if (!ok) return;
+
+    stopSpeaking();
+    stopMic();
+    setTimerActive(false);
+    setLoading(true);
+
+    const res = await endInterview({
+      interviewId: interviewData.interviewId,
+      answer: answerRef.current.trim(),
+    });
+    setLoading(false);
+
+    if (!res) {
+      alert("Could not end the interview. Check that the backend is running and try again.");
+      setTimerActive(true);
+      if (micOn) startMic();
+      return;
+    }
+
+    // Nothing was answered: there is no report, go back to the interview setup
+    if (res.discarded) {
+      navigate("/interview");
+      return;
+    }
+    navigate(`/interview/${interviewData.interviewId}/report`);
   };
 
   return (
@@ -444,7 +569,7 @@ function Step2interview({ interviewData, user }) {
           <div className='flex-1 flex flex-col min-h-0'>
             <label className='text-xs font-medium text-zinc-400 mb-1.5'>Your Answer</label>
             <textarea
-            onChange={(e)=>setAnswer(e.target.value)}
+            onChange={(e)=>replaceAnswer(e.target.value)}
             value={answer}
             rows={5}
             onKeyDown={(e)=>{if(e.ctrlKey && e.key === "Enter") submit()}}
@@ -468,7 +593,7 @@ function Step2interview({ interviewData, user }) {
           </div>
 
 
-          <div className='flex items-center justify-between mt-4 pt-3 border-t border-white/8'>
+          <div className='flex flex-wrap items-center justify-between gap-2 mt-4 pt-3 border-t border-white/8'>
           <span className='text-xs text-zinc-600 hidden sm:block'>
             Press{" "}
             <span className='mx-1 rounded bg-white/10 px-1.5 py-0.5 text-white text-[10px]'>
@@ -476,14 +601,37 @@ function Step2interview({ interviewData, user }) {
             </span>to Submit
           </span>
 
-          <motion.button 
+          <div className='ml-auto flex items-center gap-2'>
+          {/* End the interview early: report covers answered questions only */}
+          <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={endEarly}
+              disabled={loading}
+              title='End now and get a report for the questions you answered'
+              className='h-10 px-3 rounded-xl border border-red-500/30 text-red-400 text-xs font-medium flex items-center gap-1.5 hover:bg-red-500/10 disabled:opacity-40 transition'>
+              <FiXCircle size={14} /> End interview
+          </motion.button>
+
+          {/* Skip: scored 0, moves to the next question */}
+          <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={skip}
+              disabled={loading}
+              title='Skip this question (scored 0)'
+              className='h-10 px-3 rounded-xl border border-white/15 text-white/70 text-xs font-medium flex items-center gap-1.5 hover:bg-white/5 disabled:opacity-40 transition'>
+              <FiSkipForward size={14} /> Skip
+          </motion.button>
+
+          <motion.button
           whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={submit}
               disabled={loading || !answer.trim()}
-              className='ml-auto h-10 min-w-[150px] justify-center px-5 rounded-xl bg-white text-black text-sm font-semibold flex items-center gap-2 disabled:opacity-40 transition'
+              className='h-10 min-w-[150px] justify-center px-5 rounded-xl bg-white text-black text-sm font-semibold flex items-center gap-2 disabled:opacity-40 transition'
 
-              
+
               >
                  {loading ? (
                 <>
@@ -495,7 +643,8 @@ function Step2interview({ interviewData, user }) {
               )}
 
           </motion.button>
-          
+          </div>
+
           </div>
 
 

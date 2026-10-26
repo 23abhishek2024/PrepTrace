@@ -1,65 +1,38 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import llm from "../config/llm.js";
+import invokeJSON from "../utils/llmJson.js";
 import roadmapPrompt from "../prompts/roadmapPrompt.js";
+import { itemToString, roadmapSchema } from "../schemas/llm.schemas.js";
+import { cleanShortField, UNTRUSTED_DATA_RULE, wrapUntrusted } from "../utils/promptGuard.js";
 
-export const roadmapAgent = async ({
-  role,
-  targetPackage,
-  useResume = false,
-  resume = null,
-}) => {
-  try {
-    const resumeData =
-      useResume && resume
-        ? {
-            skills: resume.skills,
-            missingSkills: resume.missingSkills,
-            projects: resume.projects,
-            experience: resume.experience,
-            score: resume.score,
-            suggestedRole: resume.suggestedRole,
-            recommendations: resume.recommendations,
-          }
-        : null;
+const list = (values, max) => (values || []).map(itemToString).filter(Boolean).slice(0, max);
 
-    const response = await llm.invoke([
-      new SystemMessage(roadmapPrompt),
-      new HumanMessage(`
-Target Role:
-${role}
+export const roadmapAgent = async ({ role, targetPackage, resume = null }) => {
+  const resumeData = resume
+    ? {
+        skills: list(resume.skills, 30),
+        missingSkills: list(resume.missingSkills, 15),
+        projects: list(resume.projects, 6),
+        experience: list(resume.experience, 5),
+        score: resume.score,
+        suggestedRole: itemToString(resume.suggestedRole),
+        recommendations: list(resume.recommendations, 8),
+      }
+    : null;
 
-Target Package:
-${targetPackage}
+  const user = [
+    `Target Role: ${cleanShortField(role, 100)}`,
+    `Target Package: ${cleanShortField(targetPackage, 50)}`,
+    resumeData
+      ? `Resume:\n${wrapUntrusted("resume_profile", JSON.stringify(resumeData, null, 2), 8000)}`
+      : "Resume: not provided",
+  ].join("\n\n");
 
-Resume:
-${JSON.stringify(resumeData, null, 2)}
-`),
-    ]);
-
-    let cleaned = response.content.trim();
-    if (cleaned.startsWith("```json")) {
-      cleaned = cleaned.replace(/^```json/, "").replace(/```$/, "").trim();
-    } else if (cleaned.startsWith("```")) {
-      cleaned = cleaned.replace(/^```/, "").replace(/```$/, "").trim();
-    }
-
-    const roadmap = JSON.parse(cleaned);
-
-    const capitalize = (value = "") =>
-      value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-
-    roadmap.level = capitalize(roadmap.level || "Intermediate");
-
-    roadmap.modules = (roadmap.modules || []).map((module) => ({
-      ...module,
-      difficulty: capitalize(module.difficulty || "Medium"),
-    }));
-
-    return roadmap;
-  } catch (error) {
-    console.error("Roadmap Agent Error:", error);
-    throw new Error("Failed to generate learning roadmap: " + error.message);
-  }
+  // Level and difficulty capitalization is normalized by the schema.
+  return invokeJSON({
+    task: "roadmap",
+    system: `${roadmapPrompt}\n\n${UNTRUSTED_DATA_RULE}`,
+    user,
+    schema: roadmapSchema,
+  });
 };
 
 export default roadmapAgent;

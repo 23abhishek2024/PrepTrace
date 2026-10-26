@@ -154,25 +154,39 @@ export const getMe = async (req, res) => {
 
 export const useInterviewCoins = async (req, res) => {
   try {
-    const { coins = 0, action = "action" } = req.body;
-    const user = req.user;
+    const { action = "action" } = req.body;
+    const coins = Number(req.body.coins);
 
-    if (user.interviewCoin < coins) {
-      return res.status(403).json({
+    // Reject negative, zero, fractional and non-numeric values
+    // (a negative value would otherwise ADD coins to the account).
+    if (!Number.isInteger(coins) || coins <= 0) {
+      return res.status(400).json({
         success: false,
-        message: "Not enough interview coins",
-        interviewCoin: user.interviewCoin,
+        message: "coins must be a positive whole number",
       });
     }
 
-    user.interviewCoin = Math.max(0, user.interviewCoin - Number(coins));
-    await user.save();
+    // Atomic check-and-decrement: two parallel requests cannot both spend
+    // the same coins (no read-modify-write race).
+    const updated = await User.findOneAndUpdate(
+      { _id: req.user._id, interviewCoin: { $gte: coins } },
+      { $inc: { interviewCoin: -coins } },
+      { new: true }
+    ).select("interviewCoin");
+
+    if (!updated) {
+      return res.status(403).json({
+        success: false,
+        message: "Not enough interview coins",
+        interviewCoin: req.user.interviewCoin,
+      });
+    }
 
     return res.status(200).json({
       success: true,
       message: "Coins updated successfully",
       action,
-      interviewCoin: user.interviewCoin,
+      interviewCoin: updated.interviewCoin,
     });
   } catch (error) {
     return res.status(500).json({

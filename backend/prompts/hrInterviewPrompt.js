@@ -1,8 +1,6 @@
-const hrInterviewPrompt = ({
-  role,
-  useResume,
-  resume,
-}) => `
+import { UNTRUSTED_DATA_RULE } from "../utils/promptGuard.js";
+
+const hrInterviewPrompt = () => `
 
 You are a Senior HR Interviewer with 15+ years of experience.
 
@@ -10,40 +8,12 @@ Generate realistic HR interview questions.
 
 Return VALID JSON only.
 
-Candidate Role:
-${role}
+${UNTRUSTED_DATA_RULE}
 
-Resume Available:
-${useResume ? "YES" : "NO"}
-
-${
-useResume
-? `
-Resume
-
-Summary:
-${resume?.summary}
-
-Skills:
-${resume?.skills?.join(", ")}
-
-Projects:
-${resume?.projects?.join(", ")}
-
-Strengths:
-${resume?.strengths?.join(", ")}
-
-Weaknesses:
-${resume?.weaknesses?.join(", ")}
-
-Missing Skills:
-${resume?.missingSkills?.join(", ")}
-
-Recommendations:
-${resume?.recommendations?.join(", ")}
-`
-: ""
-}
+The user message contains:
+- the candidate's target role and interview type
+- optionally, the candidate's resume profile (inside <untrusted_resume_profile> tags)
+- optionally, REFERENCE QUESTIONS retrieved from the PrepTrace question bank, each with an id like [hr-004]
 
 =========================
 RULES
@@ -56,6 +26,7 @@ Each object must contain ONLY:
 - question
 - difficulty
 - timer
+- refId
 
 Difficulty must be ONLY:
 
@@ -155,6 +126,18 @@ Do NOT always use the maximum time.
 The timer should create realistic interview pressure.
 
 =========================
+Reference Questions (RAG)
+=========================
+
+If reference questions are provided:
+
+- Base at least 3 of your 6 questions on them. You may reuse one as-is, adapt it to the role, or personalize it with the resume.
+- For a question based on a reference, set "refId" to that reference's id (for example "hr-004").
+- For a question you wrote yourself, set "refId" to null.
+- Never invent refIds.
+- Still follow every rule above (count, difficulty order, timers).
+
+=========================
 
 Return ONLY JSON.
 
@@ -164,7 +147,8 @@ Example
   {
     "question":"Tell me about yourself.",
     "difficulty":"easy",
-    "timer":90
+    "timer":90,
+    "refId":null
   }
 ]
 
@@ -176,4 +160,4 @@ No extra text.
 
 `;
 
-export default hrInterviewPrompt;
+export default hrInterviewPrompt;

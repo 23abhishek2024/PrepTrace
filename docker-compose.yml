@@ -1,10 +1,12 @@
-version: '3.8'
+# Run everything locally:   docker compose up --build
+# Needs a .env file next to this one with JWT_SECRET and GROQ_API_KEY (see .env.example).
+# Seed the RAG question bank once:   docker compose exec backend npm run seed:questions
 
 services:
   mongodb:
     image: mongo:7.0
     container_name: preptrace_db
-    restart: always
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
@@ -17,7 +19,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: preptrace_backend
-    restart: always
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
@@ -26,6 +28,10 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - FRONTEND_URL=http://localhost:5173
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      - MODEL_CACHE_DIR=/app/.model-cache
+    volumes:
+      - model_cache:/app/.model-cache # embedding model is downloaded only once
     depends_on:
       - mongodb
     networks:
@@ -35,12 +41,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Vite bakes this into the build; the browser calls the backend directly
+        VITE_BACKEND_URL: http://localhost:8000
     container_name: preptrace_frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "5173:5173"
-    environment:
-      - VITE_API_URL=http://localhost:8000/api
     depends_on:
       - backend
     networks:
@@ -48,6 +55,7 @@ services:
 
 volumes:
   mongo_data:
+  model_cache:
 
 networks:
   preptrace_net:

@@ -1,11 +1,11 @@
-import fs from "fs";
 import { PDFParse } from "pdf-parse";
 
-const extractText = async (filePath) => {
+// Extract plain text from a PDF held in memory (multer memoryStorage).
+const extractText = async (buffer) => {
   try {
-    const buffer = fs.readFileSync(filePath);
     const pdf = new PDFParse({ data: buffer });
     const result = await pdf.getText();
+    await pdf.destroy?.();
     return result.text || "";
   } catch (error) {
     console.error("PDF Parsing Error:", error);

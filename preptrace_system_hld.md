@@ -7,7 +7,7 @@
 
 **PrepTrace** is an enterprise-grade, full-stack AI career preparation platform engineered to deliver automated ATS resume evaluation, multi-turn AI mock technical and HR interviews with speech synthesis, and intelligent career roadmap generation with curated video resources.
 
-The platform is designed as a **high-throughput, modular Express.js monolith** backed by **MongoDB**, powered by **LangChain (LCEL)** and accelerated by **Groq LPU hardware inference (`openai/gpt-oss-120b`)** for sub-3-second end-to-end LLM processing.
+The platform is designed as a **high-throughput, modular Express.js monolith** backed by **MongoDB**, powered by **LangChain** chat models with **Zod-validated structured outputs** and accelerated by **Groq LPU hardware inference (`openai/gpt-oss-120b`)** for sub-3-second end-to-end LLM processing.
 
 ### Core Architectural Pillars
 1. **Low-Latency LLM Inference Engine**: Leverages Groq's Tensor Streaming Processor (LPU) architecture to achieve >300 tokens/sec generation, reducing interview turn latency from typical 8–12s (standard GPUs) to under 1.5s.
@@ -23,7 +23,7 @@ The platform is designed as a **high-throughput, modular Express.js monolith** b
 ### 2.1 Functional Requirements
 - **ATS Resume Evaluation**: Users upload PDF resumes (≤ 5MB). The system extracts candidate details, evaluates ATS compliance (0–100 score), and categorizes strengths, weaknesses, missing skills, and actionable recommendations.
 - **Dynamic Multi-Turn Mock Interview**: Candidates select role, target experience, and interview type (Technical or HR). The system generates dynamic, context-aware questions, supports voice reading via Web Speech API, and accepts code/text answers.
-- **Real-Time Answer Assessment**: Each user answer is scored (0–10) with immediate constructive feedback, improvements, and exemplary model answers.
+- **Real-Time Answer Assessment**: Each user answer is scored 0–100 on 8 dimensions with short constructive feedback and 3 improvements.
 - **Comprehensive Interview Analytics**: Upon concluding all interview rounds, the platform computes aggregate scores, technical accuracy, communication ratings, and radar chart metrics.
 - **AI Career Roadmap Builder**: Users input a desired tech role, timeline, and target CTC. The system architects a week-by-week curriculum with embedded YouTube tutorials.
 - **ATS Resume Builder & PDF Exporter**: In-browser resume generator with dynamic section editing, live preview, and browser-native PDF export (`react-to-print`).
@@ -92,7 +92,7 @@ graph TD
     end
 
     %% Connections
-    Agents -->|Prompt + LCEL Pipe| GroqLPU
+    Agents -->|invokeJSON: validate + repair retry| GroqLPU
     ResourceAgent -->|REST Search API| YouTubeAPI
     Controllers -->|Mongoose ODM| MongoDB
 
@@ -134,7 +134,7 @@ preptrace/
 │   │   ├── interview.controller.js # Start, step-through, and summarize interviews
 │   │   └── roadmap.controller.js # Generate and fetch career roadmaps
 │   ├── agents/
-│   │   ├── resume.agent.js       # LangChain LCEL pipeline for ATS scoring
+│   │   ├── resume.agent.js       # Rubric-based ATS analysis (score computed in code)
 │   │   ├── interview.agent.js    # Dynamic question generation pipeline
 │   │   ├── feedback.agent.js     # Single-turn answer evaluation pipeline
 │   │   ├── summary.agent.js      # Final interview report calculation
@@ -399,7 +399,7 @@ sequenceDiagram
 | **Backend Architecture**| **Express.js Monolith** | Microservices, NestJS | Matches user syllabus; eliminates network hops, Docker orchestrations, and distributed transaction complexity. |
 | **Database Engine** | **MongoDB 7 + Mongoose** | PostgreSQL, MySQL | Native JSON document model aligns naturally with unstructured resumes, multi-turn interview conversations, and hierarchical roadmaps. |
 | **AI Inference Host** | **Groq Cloud (LPU)** | OpenAI, Anthropic, Local Ollama | 10x faster inference speed (~300 tokens/sec), vital for realistic conversational mock interview flow. |
-| **AI Framework** | **LangChain Core & LCEL** | LangGraph, Raw fetch | Modular prompt templates, standardized runnable pipes (`prompt.pipe(llm)`), clean separation without graph engine overhead. |
+| **AI Framework** | **LangChain Core + Zod** | LangGraph, Raw fetch | Chat-model client and message types; one `invokeJSON` helper validates every reply with Zod and retries once with the exact errors. No graph-engine overhead. |
 | **Authentication** | **JWT in HTTP-Only Cookies** | Firebase Auth, Sessions | Complete ownership of user data, immune to client XSS token theft, no external vendor lock-in. |
 | **File Processing** | **Multer Memory Buffer** | Disk Storage, AWS S3 | Sub-250ms parsing without disk I/O latency; temporary buffers are garbage-collected immediately post-parse. |
 

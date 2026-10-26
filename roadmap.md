@@ -9,10 +9,11 @@
 | :---: | :--- | :--- | :---: |
 | **01** | **Monolith Backend & Scratch JWT Auth** | Node.js, Express, MongoDB, Mongoose, bcryptjs, HTTP-only JWT cookies, MVC structure | ✅ **COMPLETED** |
 | **02** | **ATS Resume Scorer without Redis** | Multer memoryStorage, `pdf-parse`, Groq LPU `openai/gpt-oss-120b`, ATS 0–100 rubric scoring | ✅ **COMPLETED** |
-| **03** | **Conversational Mock Interview without LangGraph** | Direct LangChain LCEL pipelines, turn scoring, Web Speech API synthesis, Monaco editor | ✅ **COMPLETED** |
+| **03** | **Conversational Mock Interview without LangGraph** | Direct LangChain chat-model calls, turn scoring, Web Speech API synthesis, Monaco editor | ✅ **COMPLETED** |
 | **04** | **Career Roadmap Builder & Video Enrichment** | Dynamic weekly roadmap generation, YouTube Data API v3 resolver with fallback | ✅ **COMPLETED** |
 | **05** | **Paywall, Microservice & Redis Elimination** | Deleted 6 microservices, gateway, Redis, Razorpay, and coin barriers; 100% free | ✅ **COMPLETED** |
 | **06** | **Production Polish & System Verification** | E2E functional verification, null safety guards, Redux resume slice, ATS print template | ✅ **COMPLETED** |
+| **07** | **AI Engineering Upgrades** | Zod-validated LLM output with repair retry, rubric ATS score computed in code + JD match, prompt-injection guard, RAG question bank (local embeddings), LLM result cache, eval harness, unit tests, Dockerfiles | ✅ **COMPLETED** |
 
 ---
 
@@ -49,9 +50,9 @@
 
 ### Phase 3: Conversational AI Mock Interview without LangGraph [COMPLETED]
 1. **LangGraph State Graph Elimination**:
-   - Replaced complex `@langchain/langgraph` state graphs with clean, modular LangChain LCEL async functions:
+   - Replaced complex `@langchain/langgraph` state graphs with clean, modular async agent functions that call LangChain chat models directly:
      - `interview.agent.js`: Contextual question generator.
-     - `feedback.agent.js`: Turn-by-turn answer evaluation and scoring (0–10).
+     - `feedback.agent.js`: Turn-by-turn answer evaluation and scoring (0–100 on 8 dimensions).
      - `summary.agent.js`: Final interview performance synthesizer and radar chart metrics.
 2. **Stateful Multi-Turn Persistence ([backend/models/interview.model.js](file:///c:/local_files/2.preptrace/2.preptrace/backend/models/interview.model.js))**:
    - Built Mongoose document structure storing an array of turns (`questions`), overall scores, and final feedback directly in MongoDB.
@@ -82,11 +83,20 @@
 3. **Clean Dependencies**:
    - Removed `firebase` and `ioredis` dependencies from project manifests.
 
+### Phase 7: AI Engineering Upgrades [COMPLETED]
+1. **Structured Output**: One `invokeJSON` helper parses every LLM reply, validates it with a Zod schema, and retries once with the exact validation errors; persistent failures return a clean `502`.
+2. **Explainable ATS Score**: The LLM rates 5 criteria (0–10, with evidence); the 0–100 score is a weighted sum computed in code. An optional job description replaces the keyword criterion with a deterministic skill-coverage check.
+3. **Prompt-Injection Guard**: Rules in the system message, user data in non-closable `<untrusted_*>` tags with length caps, detection and flagging, and the resume always loaded from the database.
+4. **RAG Question Bank**: 167 curated questions embedded locally with `all-MiniLM-L6-v2` (transformers.js); top-k cosine retrieval with topic diversity grounds every interview, with graceful fallback.
+5. **LLM Result Cache**: sha256 keys over task, prompt version, model and inputs; MongoDB TTL index (7 days); cache failures never fail requests.
+6. **Evaluation & Tests**: `npm run eval` measures format validity, score consistency, ranking, answer grading, injection resistance and RAG grounding; `npm test` runs unit tests with a fake LLM.
+7. **Fixes**: `[object Object]` projects in prompts, negative/racy coin updates (now an atomic conditional update), in-memory 5 MB PDF uploads, Docker and Render configuration.
+
 ---
 
 ## Next Horizon: Scalability & Production Hardening
 
-- [ ] **Docker Multi-Stage Containerization**: Add root `Dockerfile` and `docker-compose.yml` for unified 1-click cloud deployment.
+- [x] **Docker Containerization**: `backend/Dockerfile`, multi-stage `frontend/Dockerfile` and `docker-compose.yml` (MongoDB + backend + frontend, cached embedding model volume).
 - [ ] **Voice-to-Text Input**: Expand `Step2interview.jsx` with the Web Speech Recognition API (`webkitSpeechRecognition`) for hands-free audio answers.
 - [ ] **Redis Caching Layer (Optional Scale Horizon)**: Introduce an optional Redis cache for YouTube resource queries if request volume exceeds API quota limits.
 
